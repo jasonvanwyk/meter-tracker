@@ -54,3 +54,54 @@ All protected endpoints filter by authenticated user's ID - users only see their
 
 ### Meter Reading Conversion
 Raw 7-digit readings (e.g., `1287309`) auto-convert to kiloliters: `÷10 ÷1000` (see `public/app.js:201-205`).
+
+## Deployment
+
+### Production Environment
+
+| Property | Value |
+|----------|-------|
+| URL | https://meter-tracker.com |
+| Internal | http://10.0.70.10:3000 |
+| Host | Proxmox `pve` (10.0.1.11) |
+| Container | LXC 120 (`water-monitor`) |
+| IP | 10.0.70.10 (VLAN 70 - DMZ) |
+| OS | Debian 12 |
+| Resources | 2 cores, 2GB RAM, 20GB disk |
+
+### Infrastructure
+
+- **Network**: VLAN 70 (DMZ) - isolated from internal networks
+- **Access**: Cloudflare Tunnel only (no direct inbound ports)
+- **DNS**: Pi-hole (10.0.40.2, 10.0.40.3)
+- **Process Manager**: PM2
+- **Tunnel**: cloudflared service
+
+### Deployment Commands
+
+```bash
+# SSH to container (from management VLAN only)
+ssh root@10.0.70.10
+
+# Pull latest code
+cd /opt/water-monitor
+git pull origin main
+
+# Install dependencies and restart
+npm install --production
+pm2 restart water-monitor
+
+# View logs
+pm2 logs water-monitor
+
+# Check tunnel status
+systemctl status cloudflared
+```
+
+### Firewall Rules
+
+Container allows:
+- Outbound TCP 443 (Cloudflare tunnel)
+- Outbound TCP 80 (apt updates)
+- Outbound UDP 53 to 10.0.40.2/3 (DNS)
+- Inbound TCP 22 from 10.0.1.0/24 (SSH from management)
