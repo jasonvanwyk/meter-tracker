@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>Water Monitor</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Navigation -->
+        <nav class="nav-tabs">
+            <button class="nav-tab active" data-tab="dashboard">Dashboard</button>
+            <button class="nav-tab" data-tab="capture">Add Reading</button>
+            <button class="nav-tab" data-tab="history">History</button>
+            <button class="nav-tab" data-tab="settings">Settings</button>
+        </nav>
+
+        <!-- Dashboard Tab -->
+        <div id="dashboard" class="tab-content active">
+            <h2>Water Usage Dashboard</h2>
+
+            <div class="billing-period">
+                <h3>Billing Period</h3>
+                <p id="billing-period-display">Loading...</p>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <h3>Total Usage</h3>
+                    <p class="stat-value"><span id="total-usage">0</span> kL</p>
+                </div>
+
+                <div class="stat-card">
+                    <h3>Avg Daily Usage</h3>
+                    <p class="stat-value"><span id="avg-daily">0</span> kL</p>
+                </div>
+
+                <div class="stat-card">
+                    <h3>Current Total Cost</h3>
+                    <p class="stat-value">R <span id="current-cost">0</span></p>
+                </div>
+
+                <div class="stat-card">
+                    <h3>Projected Total Cost</h3>
+                    <p class="stat-value">R <span id="projected-cost">0</span></p>
+                </div>
+            </div>
+
+            <div class="cost-breakdown-section">
+                <h3>Cost Breakdown</h3>
+                <div class="cost-breakdown-grid">
+                    <div class="cost-header">Component</div>
+                    <div class="cost-header">Current (R)</div>
+                    <div class="cost-header">Projected (R)</div>
+
+                    <div class="cost-label">Water Basic</div>
+                    <div class="cost-value" id="current-water-basic">0.00</div>
+                    <div class="cost-value" id="projected-water-basic">0.00</div>
+
+                    <div class="cost-label">Water Usage</div>
+                    <div class="cost-value" id="current-water-usage">0.00</div>
+                    <div class="cost-value" id="projected-water-usage">0.00</div>
+
+                    <div class="cost-label">Sewage</div>
+                    <div class="cost-value" id="current-sewage">0.00</div>
+                    <div class="cost-value" id="projected-sewage">0.00</div>
+
+                    <div class="cost-label total">Total</div>
+                    <div class="cost-value total" id="current-total">0.00</div>
+                    <div class="cost-value total" id="projected-total">0.00</div>
+                </div>
+            </div>
+
+            <div class="daily-usage-section">
+                <h3>Daily Usage</h3>
+                <div id="daily-usage-list"></div>
+            </div>
+        </div>
+
+        <!-- Capture Tab -->
+        <div id="capture" class="tab-content">
+            <h2>Add Water Reading</h2>
+
+            <form id="reading-form">
+                <div class="form-group">
+                    <label for="reading-value">Meter Reading (Liters)</label>
+                    <input type="number" id="reading-value" step="0.1" required placeholder="e.g., 1287309 (= 128730.9 L = 128.73 kL)">
+                    <small style="color: #666; display: block; margin-top: 5px;">Enter the full 7-digit meter reading (last digit is decimal liters)</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="reading-date">Date</label>
+                    <input type="date" id="reading-date" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="reading-time">Time</label>
+                    <input type="time" id="reading-time" required>
+                </div>
+
+                <button type="submit" class="btn-primary">Save Reading</button>
+            </form>
+
+            <div id="capture-message" class="message"></div>
+        </div>
+
+        <!-- History Tab -->
+        <div id="history" class="tab-content">
+            <h2>Reading History</h2>
+
+            <div class="filter-section">
+                <div class="form-group-inline">
+                    <label for="history-start">From:</label>
+                    <input type="date" id="history-start">
+                </div>
+
+                <div class="form-group-inline">
+                    <label for="history-end">To:</label>
+                    <input type="date" id="history-end">
+                </div>
+
+                <button onclick="loadHistory()" class="btn-secondary">Filter</button>
+            </div>
+
+            <div id="history-list"></div>
+        </div>
+
+        <!-- Settings Tab -->
+        <div id="settings" class="tab-content">
+            <h2>Settings</h2>
+
+            <form id="settings-form">
+                <h3>Billing Period</h3>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="billing-start">Start Day</label>
+                        <input type="number" id="billing-start" min="1" max="31" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="billing-end">End Day</label>
+                        <input type="number" id="billing-end" min="1" max="31" required>
+                    </div>
+                </div>
+
+                <h3>Water Tariff Blocks (per kL)</h3>
+                <div class="form-group">
+                    <label for="water-basic">Basic Monthly Charge (R)</label>
+                    <input type="number" id="water-basic" step="0.01" required>
+                </div>
+
+                <div class="tariff-block">
+                    <label>0 - <input type="number" id="water-block-1-limit" step="1" class="inline-input"> kL</label>
+                    <input type="number" id="water-block-1-rate" step="0.01" placeholder="Rate" required>
+                </div>
+
+                <div class="tariff-block">
+                    <label><span id="water-block-2-start">7</span> - <input type="number" id="water-block-2-limit" step="1" class="inline-input"> kL</label>
+                    <input type="number" id="water-block-2-rate" step="0.01" placeholder="Rate" required>
+                </div>
+
+                <div class="tariff-block">
+                    <label><span id="water-block-3-start">16</span> - <input type="number" id="water-block-3-limit" step="1" class="inline-input"> kL</label>
+                    <input type="number" id="water-block-3-rate" step="0.01" placeholder="Rate" required>
+                </div>
+
+                <div class="tariff-block">
+                    <label><span id="water-block-4-start">26</span> - <input type="number" id="water-block-4-limit" step="1" class="inline-input"> kL</label>
+                    <input type="number" id="water-block-4-rate" step="0.01" placeholder="Rate" required>
+                </div>
+
+                <div class="tariff-block">
+                    <label>> <span id="water-block-5-start">35</span> kL</label>
+                    <input type="number" id="water-block-5-rate" step="0.01" placeholder="Rate" required>
+                </div>
+
+                <h3>Sewage Tariff Blocks (per kL)</h3>
+
+                <div class="tariff-block">
+                    <label>0 - <input type="number" id="sewage-block-1-limit" step="1" class="inline-input"> kL</label>
+                    <input type="number" id="sewage-block-1-rate" step="0.01" placeholder="Rate" required>
+                </div>
+
+                <div class="tariff-block">
+                    <label><span id="sewage-block-2-start">7</span> - <input type="number" id="sewage-block-2-limit" step="1" class="inline-input"> kL</label>
+                    <input type="number" id="sewage-block-2-rate" step="0.01" placeholder="Rate" required>
+                </div>
+
+                <div class="tariff-block">
+                    <label><span id="sewage-block-3-start">16</span> - <input type="number" id="sewage-block-3-limit" step="1" class="inline-input"> kL</label>
+                    <input type="number" id="sewage-block-3-rate" step="0.01" placeholder="Rate" required>
+                </div>
+
+                <div class="tariff-block">
+                    <label>> <span id="sewage-block-4-start">25</span> kL</label>
+                    <input type="number" id="sewage-block-4-rate" step="0.01" placeholder="Rate" required>
+                </div>
+
+                <button type="submit" class="btn-primary">Save Settings</button>
+            </form>
+
+            <div id="settings-message" class="message"></div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
