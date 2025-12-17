@@ -1,80 +1,70 @@
+require('dotenv').config();
 const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const path = require('path');
-const fs = require('fs');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+
+const { db, initializeDatabase, migrateFromSingleUser } = require('./config/database');
+const { authenticateToken } = require('./middleware/auth');
+const authRoutes = require('./routes/auth');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Security middleware
+app.use(helmet({
+    contentSecurityPolicy: {
+        directives: {
+            defaultSrc: ["'self'"],
+            styleSrc: ["'self'", "'unsafe-inline'"],
+            scriptSrc: ["'self'"],
+            imgSrc: ["'self'", "data:"],
+        },
+    },
+}));
+
+// Rate limiting
+const apiLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100,
+    message: { error: 'Too many requests, please try again later' }
+});
+
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 5, // 5 login attempts per 15 min
+    message: { error: 'Too many login attempts, please try again later' }
+});
 
 // Middleware
 app.use(cors());
 app.use(bodyParser.json());
 app.use(express.static('public'));
 
-// Database setup
-const dbPath = path.join(__dirname, 'water_monitor.db');
-const db = new sqlite3.Database(dbPath);
+// Apply rate limiting
+app.use('/api/', apiLimiter);
+app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/register', authLimiter);
 
-// Initialize database tables
-db.serialize(() => {
-    // Water readings table
-    db.run(`CREATE TABLE IF NOT EXISTS readings (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        reading_value REAL NOT NULL,
-        reading_date DATE NOT NULL,
-        reading_time TIME NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`);
+// Auth routes (no authentication required)
+app.use('/api/auth', authRoutes);
 
-    // Settings table
-    db.run(`CREATE TABLE IF NOT EXISTS settings (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        setting_key TEXT UNIQUE NOT NULL,
-        setting_value TEXT NOT NULL
-    )`);
+// ============================================
+// Protected API Routes (require authentication)
+// ============================================
 
-    // Initialize default settings if not exists
-    const defaultSettings = {
-        'water_basic_monthly_cost': '91.79',
-        'water_block_1_limit': '6',
-        'water_block_1_rate': '29.67',
-        'water_block_2_limit': '15',
-        'water_block_2_rate': '57.32',
-        'water_block_3_limit': '25',
-        'water_block_3_rate': '68.50',
-        'water_block_4_limit': '35',
-        'water_block_4_rate': '95.12',
-        'water_block_5_rate': '133.43',
-        'sewage_block_1_limit': '6',
-        'sewage_block_1_rate': '22.25',
-        'sewage_block_2_limit': '15',
-        'sewage_block_2_rate': '42.99',
-        'sewage_block_3_limit': '25',
-        'sewage_block_3_rate': '51.38',
-        'sewage_block_4_rate': '71.34',
-        'billing_start_day': '1',
-        'billing_end_day': '31'
-    };
-
-    const stmt = db.prepare("INSERT OR IGNORE INTO settings (setting_key, setting_value) VALUES (?, ?)");
-    for (const [key, value] of Object.entries(defaultSettings)) {
-        stmt.run(key, value);
-    }
-    stmt.finalize();
-});
-
-// API Routes
-
-// Get all readings for a specific period
-app.get('/api/readings', (req, res) => {
+// Get all readings for authenticated user
+app.get('/api/readings', authenticateToken, (req, res) => {
     const { start_date, end_date } = req.query;
-    let query = "SELECT * FROM readings";
-    const params = [];
+    const userId = req.user.id;
+
+    let query = "SELECT * FROM readings WHERE user_id = ?";
+    const params = [userId];
 
     if (start_date && end_date) {
-        query += " WHERE reading_date BETWEEN ? AND ?";
+        query += " AND reading_date BETWEEN ? AND ?";
         params.push(start_date, end_date);
     }
 
@@ -89,24 +79,26 @@ app.get('/api/readings', (req, res) => {
     });
 });
 
-// Add a new reading
-app.post('/api/readings', (req, res) => {
+// Add a new reading for authenticated user
+app.post('/api/readings', authenticateToken, (req, res) => {
     const { reading_value, reading_date, reading_time } = req.body;
+    const userId = req.user.id;
 
     if (!reading_value || !reading_date || !reading_time) {
         res.status(400).json({ error: 'Missing required fields' });
         return;
     }
 
-    const query = "INSERT INTO readings (reading_value, reading_date, reading_time) VALUES (?, ?, ?)";
+    const query = "INSERT INTO readings (user_id, reading_value, reading_date, reading_time) VALUES (?, ?, ?, ?)";
 
-    db.run(query, [reading_value, reading_date, reading_time], function(err) {
+    db.run(query, [userId, reading_value, reading_date, reading_time], function(err) {
         if (err) {
             res.status(500).json({ error: err.message });
             return;
         }
         res.json({
             id: this.lastID,
+            user_id: userId,
             reading_value,
             reading_date,
             reading_time
@@ -114,22 +106,29 @@ app.post('/api/readings', (req, res) => {
     });
 });
 
-// Delete a reading
-app.delete('/api/readings/:id', (req, res) => {
+// Delete a reading (only if owned by user)
+app.delete('/api/readings/:id', authenticateToken, (req, res) => {
     const { id } = req.params;
+    const userId = req.user.id;
 
-    db.run("DELETE FROM readings WHERE id = ?", id, function(err) {
+    db.run("DELETE FROM readings WHERE id = ? AND user_id = ?", [id, userId], function(err) {
         if (err) {
             res.status(500).json({ error: err.message });
+            return;
+        }
+        if (this.changes === 0) {
+            res.status(404).json({ error: 'Reading not found or unauthorized' });
             return;
         }
         res.json({ message: 'Reading deleted successfully' });
     });
 });
 
-// Get all settings
-app.get('/api/settings', (req, res) => {
-    db.all("SELECT * FROM settings", [], (err, rows) => {
+// Get all settings for authenticated user
+app.get('/api/settings', authenticateToken, (req, res) => {
+    const userId = req.user.id;
+
+    db.all("SELECT * FROM settings WHERE user_id = ?", [userId], (err, rows) => {
         if (err) {
             res.status(500).json({ error: err.message });
             return;
@@ -145,88 +144,101 @@ app.get('/api/settings', (req, res) => {
     });
 });
 
-// Update settings
-app.put('/api/settings', (req, res) => {
+// Update settings for authenticated user
+app.put('/api/settings', authenticateToken, (req, res) => {
     const settings = req.body;
-    const stmt = db.prepare("UPDATE settings SET setting_value = ? WHERE setting_key = ?");
+    const userId = req.user.id;
+
+    const stmt = db.prepare("INSERT OR REPLACE INTO settings (user_id, setting_key, setting_value) VALUES (?, ?, ?)");
 
     for (const [key, value] of Object.entries(settings)) {
-        stmt.run(value, key);
+        stmt.run(userId, key, value);
     }
 
-    stmt.finalize(() => {
-        res.json({ message: 'Settings updated successfully' });
-    });
-});
-
-// Get statistics for current billing period
-app.get('/api/statistics', (req, res) => {
-    // First get billing period settings
-    db.all("SELECT * FROM settings WHERE setting_key IN ('billing_start_day', 'billing_end_day')", [], (err, settingRows) => {
+    stmt.finalize((err) => {
         if (err) {
             res.status(500).json({ error: err.message });
             return;
         }
+        res.json({ message: 'Settings updated successfully' });
+    });
+});
 
-        const settings = {};
-        settingRows.forEach(row => {
-            settings[row.setting_key] = parseInt(row.setting_value);
-        });
+// Get statistics for authenticated user's current billing period
+app.get('/api/statistics', authenticateToken, (req, res) => {
+    const userId = req.user.id;
 
-        const today = new Date();
-        const currentYear = today.getFullYear();
-        const currentMonth = today.getMonth();
-        const currentDay = today.getDate();
+    // First get billing period settings
+    db.all(
+        "SELECT * FROM settings WHERE user_id = ? AND setting_key IN ('billing_start_day', 'billing_end_day')",
+        [userId],
+        (err, settingRows) => {
+            if (err) {
+                res.status(500).json({ error: err.message });
+                return;
+            }
 
-        let startDate, endDate;
+            const settings = {};
+            settingRows.forEach(row => {
+                settings[row.setting_key] = parseInt(row.setting_value);
+            });
 
-        if (currentDay >= settings.billing_start_day) {
-            // We're in the current billing period
-            startDate = new Date(currentYear, currentMonth, settings.billing_start_day);
-            if (settings.billing_end_day < settings.billing_start_day) {
-                // End date is in next month
-                endDate = new Date(currentYear, currentMonth + 1, settings.billing_end_day);
+            // Default billing period if not set
+            if (!settings.billing_start_day) settings.billing_start_day = 1;
+            if (!settings.billing_end_day) settings.billing_end_day = 31;
+
+            const today = new Date();
+            const currentYear = today.getFullYear();
+            const currentMonth = today.getMonth();
+            const currentDay = today.getDate();
+
+            let startDate, endDate;
+
+            if (currentDay >= settings.billing_start_day) {
+                startDate = new Date(currentYear, currentMonth, settings.billing_start_day);
+                if (settings.billing_end_day < settings.billing_start_day) {
+                    endDate = new Date(currentYear, currentMonth + 1, settings.billing_end_day);
+                } else {
+                    endDate = new Date(currentYear, currentMonth, settings.billing_end_day);
+                }
             } else {
+                startDate = new Date(currentYear, currentMonth - 1, settings.billing_start_day);
                 endDate = new Date(currentYear, currentMonth, settings.billing_end_day);
             }
-        } else {
-            // We're in the previous month's billing period that extends into this month
-            startDate = new Date(currentYear, currentMonth - 1, settings.billing_start_day);
-            endDate = new Date(currentYear, currentMonth, settings.billing_end_day);
-        }
 
-        const startDateStr = startDate.toISOString().split('T')[0];
-        const endDateStr = endDate.toISOString().split('T')[0];
+            const startDateStr = startDate.toISOString().split('T')[0];
+            const endDateStr = endDate.toISOString().split('T')[0];
 
-        // Get readings for the period
-        db.all(
-            "SELECT * FROM readings WHERE reading_date BETWEEN ? AND ? ORDER BY reading_date, reading_time",
-            [startDateStr, endDateStr],
-            (err, readings) => {
-                if (err) {
-                    res.status(500).json({ error: err.message });
-                    return;
-                }
-
-                // Get all settings for cost calculation
-                db.all("SELECT * FROM settings", [], (err, allSettings) => {
+            // Get readings for the period (user-specific)
+            db.all(
+                "SELECT * FROM readings WHERE user_id = ? AND reading_date BETWEEN ? AND ? ORDER BY reading_date, reading_time",
+                [userId, startDateStr, endDateStr],
+                (err, readings) => {
                     if (err) {
                         res.status(500).json({ error: err.message });
                         return;
                     }
 
-                    const settingsObj = {};
-                    allSettings.forEach(row => {
-                        settingsObj[row.setting_key] = row.setting_value;
-                    });
+                    // Get all settings for cost calculation
+                    db.all("SELECT * FROM settings WHERE user_id = ?", [userId], (err, allSettings) => {
+                        if (err) {
+                            res.status(500).json({ error: err.message });
+                            return;
+                        }
 
-                    // Calculate statistics
-                    const stats = calculateStatistics(readings, settingsObj, startDate, endDate);
-                    res.json(stats);
-                });
-            }
-        );
-    });
+                        const settingsObj = {};
+                        allSettings.forEach(row => {
+                            settingsObj[row.setting_key] = row.setting_value;
+                        });
+
+                        // Calculate statistics
+                        const stats = calculateStatistics(readings, settingsObj, startDate, endDate);
+                        res.json(stats);
+                    });
+                }
+            );
+        }
+    );
 });
 
 // Calculate statistics helper function
@@ -239,18 +251,8 @@ function calculateStatistics(readings, settings, startDate, endDate) {
             currentCost: 0,
             projectedCost: 0,
             costBreakdown: {
-                current: {
-                    waterBasic: 0,
-                    waterUsage: 0,
-                    sewage: 0,
-                    total: 0
-                },
-                projected: {
-                    waterBasic: 0,
-                    waterUsage: 0,
-                    sewage: 0,
-                    total: 0
-                }
+                current: { waterBasic: 0, waterUsage: 0, sewage: 0, total: 0 },
+                projected: { waterBasic: 0, waterUsage: 0, sewage: 0, total: 0 }
             },
             billingPeriod: {
                 start: startDate.toISOString().split('T')[0],
@@ -265,21 +267,16 @@ function calculateStatistics(readings, settings, startDate, endDate) {
         const usage = readings[i].reading_value - readings[i - 1].reading_value;
         dailyUsage.push({
             date: readings[i].reading_date,
-            usage: Math.max(0, usage) // Ensure no negative values
+            usage: Math.max(0, usage)
         });
     }
 
-    // Calculate total usage for the period
     const totalUsage = dailyUsage.reduce((sum, day) => sum + day.usage, 0);
-
-    // Calculate average daily usage
     const daysWithReadings = dailyUsage.length;
     const avgDailyUsage = daysWithReadings > 0 ? totalUsage / daysWithReadings : 0;
 
-    // Calculate current cost breakdown
     const currentCostBreakdown = calculateCostBreakdown(totalUsage, settings);
 
-    // Calculate projected usage and cost for the full billing period
     const totalDaysInPeriod = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
     const projectedUsage = avgDailyUsage * totalDaysInPeriod;
     const projectedCostBreakdown = calculateCostBreakdown(projectedUsage, settings);
@@ -320,13 +317,12 @@ function calculateCostBreakdown(usage, settings) {
     let sewageCost = 0;
     let remainingUsage = usage;
 
-    // Water usage cost calculation (excluding basic charge)
     const waterBlocks = [
-        { limit: parseFloat(settings.water_block_1_limit), rate: parseFloat(settings.water_block_1_rate) },
-        { limit: parseFloat(settings.water_block_2_limit), rate: parseFloat(settings.water_block_2_rate) },
-        { limit: parseFloat(settings.water_block_3_limit), rate: parseFloat(settings.water_block_3_rate) },
-        { limit: parseFloat(settings.water_block_4_limit || 35), rate: parseFloat(settings.water_block_4_rate) },
-        { limit: Infinity, rate: parseFloat(settings.water_block_5_rate || settings.water_block_4_rate) }
+        { limit: parseFloat(settings.water_block_1_limit || 6), rate: parseFloat(settings.water_block_1_rate || 0) },
+        { limit: parseFloat(settings.water_block_2_limit || 15), rate: parseFloat(settings.water_block_2_rate || 0) },
+        { limit: parseFloat(settings.water_block_3_limit || 25), rate: parseFloat(settings.water_block_3_rate || 0) },
+        { limit: parseFloat(settings.water_block_4_limit || 35), rate: parseFloat(settings.water_block_4_rate || 0) },
+        { limit: Infinity, rate: parseFloat(settings.water_block_5_rate || settings.water_block_4_rate || 0) }
     ];
 
     let prevLimit = 0;
@@ -340,13 +336,12 @@ function calculateCostBreakdown(usage, settings) {
         if (remainingUsage <= 0) break;
     }
 
-    // Sewage cost calculation
     remainingUsage = usage;
     const sewageBlocks = [
-        { limit: parseFloat(settings.sewage_block_1_limit), rate: parseFloat(settings.sewage_block_1_rate) },
-        { limit: parseFloat(settings.sewage_block_2_limit), rate: parseFloat(settings.sewage_block_2_rate) },
-        { limit: parseFloat(settings.sewage_block_3_limit), rate: parseFloat(settings.sewage_block_3_rate) },
-        { limit: Infinity, rate: parseFloat(settings.sewage_block_4_rate) }
+        { limit: parseFloat(settings.sewage_block_1_limit || 6), rate: parseFloat(settings.sewage_block_1_rate || 0) },
+        { limit: parseFloat(settings.sewage_block_2_limit || 15), rate: parseFloat(settings.sewage_block_2_rate || 0) },
+        { limit: parseFloat(settings.sewage_block_3_limit || 25), rate: parseFloat(settings.sewage_block_3_rate || 0) },
+        { limit: Infinity, rate: parseFloat(settings.sewage_block_4_rate || 0) }
     ];
 
     prevLimit = 0;
@@ -361,40 +356,55 @@ function calculateCostBreakdown(usage, settings) {
     }
 
     return {
-        waterBasic: waterBasic,
+        waterBasic,
         waterUsage: waterUsageCost,
         sewage: sewageCost,
         total: waterBasic + waterUsageCost + sewageCost
     };
 }
 
-// Start server
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Water Monitor app is running on http://0.0.0.0:${PORT}`);
-    console.log(`Access locally at: http://localhost:${PORT}`);
+// Initialize database and start server
+async function startServer() {
+    try {
+        // Check for migration needs
+        await migrateFromSingleUser();
 
-    // Get the actual network IP
-    const os = require('os');
-    const interfaces = os.networkInterfaces();
-    let primaryIP = null;
+        // Initialize database tables
+        await initializeDatabase();
 
-    // Look for the primary network interface (not docker or loopback)
-    for (const [name, addrs] of Object.entries(interfaces)) {
-        if (name.startsWith('enp') || name.startsWith('eth') || name.startsWith('en0')) {
-            for (const addr of addrs) {
-                if (addr.family === 'IPv4' && !addr.internal) {
-                    primaryIP = addr.address;
-                    break;
+        // Start server
+        app.listen(PORT, '0.0.0.0', () => {
+            console.log(`Water Monitor app is running on http://0.0.0.0:${PORT}`);
+            console.log(`Access locally at: http://localhost:${PORT}`);
+
+            // Get the actual network IP
+            const os = require('os');
+            const interfaces = os.networkInterfaces();
+            let primaryIP = null;
+
+            for (const [name, addrs] of Object.entries(interfaces)) {
+                if (name.startsWith('enp') || name.startsWith('eth') || name.startsWith('en0')) {
+                    for (const addr of addrs) {
+                        if (addr.family === 'IPv4' && !addr.internal) {
+                            primaryIP = addr.address;
+                            break;
+                        }
+                    }
                 }
             }
-        }
-    }
 
-    if (primaryIP) {
-        console.log(`\n✓ Access from your iPhone or other devices at:`);
-        console.log(`  http://${primaryIP}:${PORT}`);
-    } else {
-        console.log(`\nTo access from other devices, use your network IP address`);
-        console.log(`Run 'ip a' to find your IP (look for enp*/eth* interface)`);
+            if (primaryIP) {
+                console.log(`\nAccess from other devices at: http://${primaryIP}:${PORT}`);
+            }
+
+            if (!process.env.JWT_SECRET) {
+                console.warn('\nWARNING: JWT_SECRET not set. Using default secret. Set JWT_SECRET in .env for production!');
+            }
+        });
+    } catch (err) {
+        console.error('Failed to start server:', err);
+        process.exit(1);
     }
-});
+}
+
+startServer();

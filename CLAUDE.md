@@ -11,34 +11,46 @@ npm start            # Start the Express server on port 3000
 
 The app is accessible at `http://localhost:3000` or via network IP for mobile devices.
 
-## Utility Scripts
+## Environment Variables
 
-```bash
-node import-history.js    # Import historical readings from docs/history.txt (clears existing data)
-```
+Copy `.env.example` to `.env` and set:
+- `JWT_SECRET` - Required for production (generate with `node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"`)
+- `PORT` - Server port (default: 3000)
 
 ## Architecture
 
-This is a single-page water monitoring application with an Express backend and vanilla JavaScript frontend.
+Multi-user water monitoring application with JWT authentication.
 
-### Backend (server.js)
-- Express server with SQLite database (`water_monitor.db`)
-- REST API endpoints:
-  - `GET/POST/DELETE /api/readings` - CRUD for water meter readings
-  - `GET/PUT /api/settings` - Configuration for billing periods and tariff rates
-  - `GET /api/statistics` - Dashboard data with cost calculations for current billing period
+### Backend Structure
+```
+server.js              # Main Express server with protected routes
+config/database.js     # SQLite setup and migrations
+middleware/auth.js     # JWT verification middleware
+routes/auth.js         # Login, register, logout endpoints
+```
+
+### API Endpoints
+- **Auth (public)**: `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/auth/me`
+- **Protected (require JWT)**: `GET/POST/DELETE /api/readings`, `GET/PUT /api/settings`, `GET /api/statistics`
+
+All protected endpoints filter by authenticated user's ID - users only see their own data.
 
 ### Frontend (public/)
-- `index.html` - Single page with tab navigation (Dashboard, Add Reading, History, Settings)
-- `app.js` - Client-side logic for all tabs and API communication
-- `styles.css` - Mobile-friendly styling
+- `login.html`, `register.html` - Authentication pages
+- `auth.js` - Token storage, API wrapper with auth headers
+- `app.js` - Main SPA logic (redirects to login if not authenticated)
+- `index.html` - Dashboard, Add Reading, History, Settings tabs
 
 ### Data Model
-- **readings**: `id`, `reading_value` (kL), `reading_date`, `reading_time`, `created_at`
-- **settings**: Key-value store for billing configuration and tiered water/sewage tariff blocks
+- **users**: `id`, `username`, `password_hash`, `email`, `created_at`, `is_active`
+- **readings**: `id`, `user_id`, `reading_value` (kL), `reading_date`, `reading_time`
+- **settings**: `id`, `user_id`, `setting_key`, `setting_value` (per-user config)
 
-### Cost Calculation
-The app uses tiered pricing blocks for both water and sewage, configured in settings. Cost is calculated progressively through usage tiers (e.g., first 6kL at one rate, next 9kL at another rate, etc.).
+### Security
+- Passwords hashed with bcrypt (12 rounds)
+- JWT tokens expire in 7 days
+- Rate limiting: 5 auth attempts per 15 min, 100 API requests per 15 min
+- Helmet security headers enabled
 
 ### Meter Reading Conversion
-Raw meter readings entered as large numbers (e.g., `1287309`) are automatically converted to kiloliters: divided by 10 to get liters, then by 1000 for kL (see `public/app.js:176-182`).
+Raw 7-digit readings (e.g., `1287309`) auto-convert to kiloliters: `÷10 ÷1000` (see `public/app.js:201-205`).

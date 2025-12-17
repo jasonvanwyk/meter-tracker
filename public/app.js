@@ -2,13 +2,40 @@
 const API_URL = '';
 
 // Initialize app
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+    // Check authentication
+    const authenticated = await requireAuth();
+    if (!authenticated) {
+        return; // Will redirect to login
+    }
+
+    // Display current user
+    displayCurrentUser();
+
     initializeTabs();
     initializeForms();
     setDefaultDateTime();
     loadSettings();
     loadDashboard();
 });
+
+// Display current user in header
+function displayCurrentUser() {
+    const user = getCurrentUser();
+    if (user) {
+        const navTabs = document.querySelector('.nav-tabs');
+        if (navTabs && !document.getElementById('user-info')) {
+            const userInfo = document.createElement('div');
+            userInfo.id = 'user-info';
+            userInfo.style.cssText = 'display: flex; align-items: center; gap: 10px; padding: 8px 12px; font-size: 14px; color: #666;';
+            userInfo.innerHTML = `
+                <span>${user.username}</span>
+                <button onclick="logout()" style="background: none; border: 1px solid #ccc; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px;">Logout</button>
+            `;
+            navTabs.parentNode.insertBefore(userInfo, navTabs);
+        }
+    }
+}
 
 // Tab navigation
 function initializeTabs() {
@@ -118,7 +145,7 @@ function setDefaultDateTime() {
 // Load dashboard data
 async function loadDashboard() {
     try {
-        const response = await fetch(`${API_URL}/api/statistics`);
+        const response = await apiCall(`${API_URL}/api/statistics`);
         const stats = await response.json();
 
         // Update billing period display
@@ -171,21 +198,15 @@ async function saveReading() {
     const messageDiv = document.getElementById('capture-message');
 
     // Convert meter reading to kiloliters
-    // If user enters a large number (like 1287309), it's in liters with decimal
     let readingInKL = parseFloat(readingValue);
     if (readingInKL > 1000) {
-        // This is likely a raw meter reading in liters (with last digit as decimal)
-        // First divide by 10 to get actual liters, then by 1000 to get kL
-        const readingInLiters = readingInKL / 10;  // e.g., 1287309 → 128730.9 liters
-        readingInKL = readingInLiters / 1000;      // e.g., 128730.9 → 128.7309 kL
+        const readingInLiters = readingInKL / 10;
+        readingInKL = readingInLiters / 1000;
     }
 
     try {
-        const response = await fetch(`${API_URL}/api/readings`, {
+        const response = await apiCall(`${API_URL}/api/readings`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
             body: JSON.stringify({
                 reading_value: readingInKL,
                 reading_date: readingDate,
@@ -198,7 +219,6 @@ async function saveReading() {
             document.getElementById('reading-form').reset();
             setDefaultDateTime();
 
-            // Reload dashboard if it's active
             if (document.getElementById('dashboard').classList.contains('active')) {
                 loadDashboard();
             }
@@ -222,7 +242,7 @@ async function loadHistory() {
         if (startDate) params.append('start_date', startDate);
         if (endDate) params.append('end_date', endDate);
 
-        const response = await fetch(`${API_URL}/api/readings?${params}`);
+        const response = await apiCall(`${API_URL}/api/readings?${params}`);
         const readings = await response.json();
 
         const historyList = document.getElementById('history-list');
@@ -249,13 +269,12 @@ async function loadHistory() {
 async function deleteReading(id) {
     if (confirm('Are you sure you want to delete this reading?')) {
         try {
-            const response = await fetch(`${API_URL}/api/readings/${id}`, {
+            const response = await apiCall(`${API_URL}/api/readings/${id}`, {
                 method: 'DELETE'
             });
 
             if (response.ok) {
                 loadHistory();
-                // Reload dashboard if it's active
                 if (document.getElementById('dashboard').classList.contains('active')) {
                     loadDashboard();
                 }
@@ -269,7 +288,7 @@ async function deleteReading(id) {
 // Load settings
 async function loadSettings() {
     try {
-        const response = await fetch(`${API_URL}/api/settings`);
+        const response = await apiCall(`${API_URL}/api/settings`);
         const settings = await response.json();
 
         // Populate form fields
@@ -328,18 +347,14 @@ async function saveSettings() {
     const messageDiv = document.getElementById('settings-message');
 
     try {
-        const response = await fetch(`${API_URL}/api/settings`, {
+        const response = await apiCall(`${API_URL}/api/settings`, {
             method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json'
-            },
             body: JSON.stringify(settings)
         });
 
         if (response.ok) {
             showMessage(messageDiv, 'Settings saved successfully!', 'success');
 
-            // Reload dashboard to reflect new settings
             if (document.getElementById('dashboard').classList.contains('active')) {
                 loadDashboard();
             }
