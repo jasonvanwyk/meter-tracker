@@ -19,8 +19,10 @@ app.use(helmet({
         directives: {
             defaultSrc: ["'self'"],
             styleSrc: ["'self'", "'unsafe-inline'"],
-            scriptSrc: ["'self'"],
+            scriptSrc: ["'self'", "'unsafe-inline'"],
+            scriptSrcAttr: ["'unsafe-inline'"], // Allow onclick handlers
             imgSrc: ["'self'", "data:"],
+            upgradeInsecureRequests: null, // Disable for HTTP development
         },
     },
 }));
