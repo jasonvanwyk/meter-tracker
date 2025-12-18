@@ -40,6 +40,12 @@ const authLimiter = rateLimit({
     message: { error: 'Too many login attempts, please try again later' }
 });
 
+const forgotPasswordLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 3, // Only 3 requests per 15 min per IP
+    message: { error: 'Too many password reset requests, please try again later' }
+});
+
 // Middleware
 app.use(cors());
 app.use(bodyParser.json());
@@ -49,6 +55,7 @@ app.use(express.static('public'));
 app.use('/api/', apiLimiter);
 app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
+app.use('/api/auth/forgot-password', forgotPasswordLimiter);
 
 // Auth routes (no authentication required)
 app.use('/api/auth', authRoutes);

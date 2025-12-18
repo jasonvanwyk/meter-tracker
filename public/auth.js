@@ -135,3 +135,49 @@ async function requireAuth() {
 
     return true;
 }
+
+// Request password reset
+async function forgotPassword(email) {
+    const response = await fetch('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+        throw new Error(data.error || data.errors?.[0]?.msg || 'Request failed');
+    }
+
+    return data;
+}
+
+// Verify reset token
+async function verifyResetToken(token) {
+    const response = await fetch(`/api/auth/verify-reset-token?token=${encodeURIComponent(token)}`);
+    const data = await response.json();
+
+    if (!response.ok) {
+        throw new Error(data.error || 'Invalid token');
+    }
+
+    return data;
+}
+
+// Reset password with token
+async function resetPassword(token, password) {
+    const response = await fetch('/api/auth/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, password })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+        throw new Error(data.error || data.errors?.[0]?.msg || 'Reset failed');
+    }
+
+    return data;
+}
