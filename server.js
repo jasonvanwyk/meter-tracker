@@ -271,11 +271,13 @@ function calculateStatistics(readings, settings, startDate, endDate) {
     }
 
     // Calculate daily usage
+    // When you take a reading on day X, the difference from the previous reading
+    // represents water consumed on day X-1 (the previous day)
     const dailyUsage = [];
     for (let i = 1; i < readings.length; i++) {
         const usage = readings[i].reading_value - readings[i - 1].reading_value;
         dailyUsage.push({
-            date: readings[i].reading_date,
+            date: readings[i - 1].reading_date,  // Attribute usage to the previous day
             usage: Math.max(0, usage)
         });
     }
