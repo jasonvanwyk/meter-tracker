@@ -72,7 +72,22 @@ function initializeDatabase() {
             // Create indexes
             db.run(`CREATE INDEX IF NOT EXISTS idx_readings_user_id ON readings(user_id)`);
             db.run(`CREATE INDEX IF NOT EXISTS idx_readings_user_date ON readings(user_id, reading_date)`);
-            db.run(`CREATE INDEX IF NOT EXISTS idx_settings_user_id ON settings(user_id)`, (err) => {
+            db.run(`CREATE INDEX IF NOT EXISTS idx_settings_user_id ON settings(user_id)`);
+
+            // Create password reset tokens table
+            db.run(`CREATE TABLE IF NOT EXISTS password_reset_tokens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                token_hash TEXT NOT NULL,
+                expires_at DATETIME NOT NULL,
+                used_at DATETIME,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )`);
+
+            // Create indexes for password reset tokens
+            db.run(`CREATE INDEX IF NOT EXISTS idx_reset_tokens_hash ON password_reset_tokens(token_hash)`);
+            db.run(`CREATE INDEX IF NOT EXISTS idx_reset_tokens_user ON password_reset_tokens(user_id)`, (err) => {
                 if (err) {
                     reject(err);
                 } else {

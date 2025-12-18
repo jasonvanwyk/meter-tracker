@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-in-production';
 const JWT_EXPIRY = '7d';
@@ -42,10 +43,22 @@ function verifyToken(token) {
     }
 }
 
+// Generate cryptographically secure reset token
+function generateResetToken() {
+    return crypto.randomBytes(32).toString('hex'); // 64 character hex string
+}
+
+// Hash token for storage (using SHA-256)
+function hashToken(token) {
+    return crypto.createHash('sha256').update(token).digest('hex');
+}
+
 module.exports = {
     authenticateToken,
     generateToken,
     verifyToken,
+    generateResetToken,
+    hashToken,
     JWT_SECRET,
     JWT_EXPIRY
 };
